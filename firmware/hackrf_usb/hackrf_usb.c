@@ -45,6 +45,7 @@
 #include "usb_api_sweep.h"
 #include "usb_api_transceiver.h"
 #include "usb_bulk_buffer.h"
+#include "cpld_xc2c.h"
  
 #include "hackrf-ui.h"
 
@@ -139,7 +140,11 @@ static usb_request_handler_fn vendor_request_handler[] = {
 	usb_vendor_request_spiflash_status,
 	usb_vendor_request_spiflash_clear_status,
 	usb_vendor_request_operacake_gpio_test,
+#ifdef HACKRF_ONE
 	usb_vendor_request_cpld_checksum,
+#else
+	NULL,
+#endif
 };
 
 static const uint32_t vendor_request_handler_count =
@@ -175,11 +180,9 @@ void usb_configuration_changed(
 	set_transceiver_mode(TRANSCEIVER_MODE_OFF);
 	if( device->configuration->number == 1 ) {
 		// transceiver configuration
-		cpu_clock_pll1_max_speed();
 		led_on(LED1);
 	} else {
 		/* Configuration number equal 0 means usb bus reset. */
-		cpu_clock_pll1_low_speed();
 		led_off(LED1);
 	}
 }
@@ -209,6 +212,14 @@ void usb_set_descriptor_by_serial_number(void)
 	}
 }
 
+static bool cpld_jtag_sram_load(jtag_t* const jtag) {
+	cpld_jtag_take(jtag);
+	cpld_xc2c64a_jtag_sram_write(jtag, &cpld_hackrf_program_sram);
+	const bool success = cpld_xc2c64a_jtag_sram_verify(jtag, &cpld_hackrf_program_sram, &cpld_hackrf_verify);
+	cpld_jtag_release(jtag);
+	return success;
+}
+
 int main(void) {
 	pin_setup();
 	enable_1v8_power();
@@ -219,6 +230,10 @@ int main(void) {
 	delay(1000000);
 #endif
 	cpu_clock_init();
+
+	if( !cpld_jtag_sram_load(&jtag_cpld) ) {
+		halt_and_flash(6000000);
+	}
 
 #ifndef DFU_MODE
 	usb_set_descriptor_by_serial_number();
@@ -239,7 +254,7 @@ int main(void) {
 	
 	nvic_set_priority(NVIC_USB0_IRQ, 255);
 
-	hackrf_ui_init();
+	hackrf_ui()->init();
 
 	usb_run(&usb_device);
 	
